@@ -7,8 +7,8 @@
 
 (declare keccak-1600)
 (declare round-1600)
-(declare pad-input)
-(declare split-input-into-words)
+(declare break-into-blocks-and-pad)
+(declare split-into-words)
 (declare word-to-little-endian-bytes)
 
 (def ^:private sha-3-base-params
@@ -49,26 +49,23 @@
 (defn keccak-1600 [params byte-coll]
   "Keccak with b = 1600, i.e. 64-bit words and 24 rounds per block"
   {:pre [(coll? byte-coll)]}
-  (let
-      [init-state (repeat 25 0)
-       block-size-in-words  (quot (calc-bit-rate params) 64)
-       output-size-in-bytes (quot (params :output-size) 8)
+  (let [init-state (repeat 25 0)
+        block-size-in-words  (quot (calc-bit-rate params) 64)
+        output-size-in-bytes (quot (params :output-size) 8)
 
-       keccak-f
-       (fn [state]
-         (reduce round-1600 (long-array state) round-constants))
+        keccak-f
+        (fn [state]
+          (reduce round-1600 (long-array state) round-constants))
 
-       absorb-block
-       (fn [state block]
-         (->> (concat block (repeat 0))
-              (map bit-xor state)
-              keccak-f))
+        absorb-block
+        (fn [state block]
+          (->> (concat (split-into-words block) (repeat 0))
+               (map bit-xor state)
+               keccak-f))
 
-       squeeze (partial take block-size-in-words)]
+        squeeze (partial take block-size-in-words)]
     (->> byte-coll
-         (pad-input params)
-         (split-input-into-words)
-         (partition block-size-in-words)
+         (break-into-blocks-and-pad params)
          (reduce absorb-block init-state)
          (iterate keccak-f)
          (mapcat squeeze)
@@ -85,31 +82,40 @@
 (defmacro ^:private chi-combinator [a b c]
   `(bit-xor (long ~a) (bit-and (long ~c) (bit-not (long ~b)))))
 
-(defmacro ^:private mod5 [x]
-  `(unchecked-remainder-int (+ (long ~x) 5) 5))
+(def ^:private i-rem-5     (hl/amake [i 25] (rem i 5)))
+(def ^:private inc-i-rem-5 (hl/amake [i 25] (rem (inc i) 5)))
+(def ^:private dec-i-rem-5 (hl/amake [i 25] (rem (+ i 4) 5)))
 
-(defn- round-1600 [state-array round-constant]
+(def ^:private chi-index-1
+  (hl/amake [i 25] (+ i (- (rem (+ i 1) 5) (rem i 5)))))
+
+(def ^:private chi-index-2
+  (hl/amake [i 25] (+ i (- (rem (+ i 2) 5) (rem i 5)))))
+
+(defn- round-1600 [state-array ^long round-constant]
   (let [theta
         (fn [sa]
           (let [c (let [c (long-array 5 0)]
-                    (hl/doarr [[i w] sa]
-                              (hl/aset c (mod5 i)
-                                       (bit-xor w (hl/aget c (mod5 i)))))
-                    c)
-                c-rot (hl/amap [x c] (positive-rotate 1 x))]
-            (hl/doarr [[i w] sa]
+                    (hl/doarr [[i w] sa
+                               m i-rem-5]
+                              (hl/aset c m
+                                       (bit-xor w (hl/aget c m))))
+                    c)]
+            (hl/doarr [[i w] sa
+                       i+ inc-i-rem-5
+                       i- dec-i-rem-5]
                       (hl/aset sa i
                                (bit-xor w
-                                        (hl/aget c (mod5 (dec i)))
-                                        (hl/aget c-rot (mod5 (inc i)))))))
+                                        (hl/aget c i-)
+                                        (positive-rotate 1 (hl/aget c i+))))))
           sa)
 
         rho
         (fn [sa]
-          (hl/doarr [[i w] sa]
+          (hl/doarr [[i w] sa
+                     rot rotation-offsets]
                     (hl/aset sa i
-                             (positive-rotate (hl/aget rotation-offsets i)
-                                              w)))
+                             (positive-rotate rot w)))
           sa)
 
         pi
@@ -119,12 +125,10 @@
 
         chi
         (fn [sa]
-          (hl/amake [i 25]
-                    (let [m (long (- i (mod5 i)))]
-                      (chi-combinator
-                       (hl/aget sa i)
-                       (hl/aget sa (+ m (mod5 (+ i 1))))
-                       (hl/aget sa (+ m (mod5 (+ i 2))))))))
+          (hl/amap [w sa
+                    j chi-index-1
+                    k chi-index-2]
+                   (chi-combinator w (hl/aget sa j) (hl/aget sa k))))
 
         iota
         (fn [sa]
@@ -134,7 +138,7 @@
         ]
     (-> state-array theta rho pi chi iota)))
 
-(defn- pad-input [params input-bytes]
+(defn- break-into-blocks-and-pad [params input-bytes]
   (let [block-size-in-bytes (quot (calc-bit-rate params) 8)
 
         padding-bytes
@@ -155,9 +159,9 @@
                      (let [[block rst] (split-at block-size-in-bytes bs)
                            n (count block)]
                        (if (< n block-size-in-bytes)
-                         (concat block (suffix-and-padding n))
+                         [(concat block (suffix-and-padding n))]
                          (lazy-seq
-                          (concat block (lp rst))))))
+                          (cons block (lp rst))))))
         ]
     (lazily-pad input-bytes)))
 
@@ -175,6 +179,6 @@
        (#(nth % 8))
        first))
 
-(defn- split-input-into-words [bs]
+(defn- split-into-words [bs]
   (->> (partition 8 bs)
        (map little-endian-bytes-to-word)))

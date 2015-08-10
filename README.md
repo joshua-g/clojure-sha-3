@@ -25,6 +25,6 @@ user> (time
                     (map int "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmno"))
             (apply concat)
             s/sha-3-224))
-"Elapsed time: 698019.294166 msecs"
+"Elapsed time: 594340.894776 msecs" ; about 10 minutes
 "c6d66e77ae289566afb2ce39277752d6da2a3c46010f1e0a0970ff60"
 ```
