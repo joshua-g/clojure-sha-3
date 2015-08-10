@@ -168,29 +168,3 @@
 (defn- split-input-into-words [bs]
   (->> (partition 8 bs)
        (map little-endian-bytes-to-word)))
-
-(defn- hex-string-to-integer [h]
-  (->> (split-at 8 h)
-       (map (partial apply str))
-       (map #(Long/parseLong % 16))
-       ((fn [[a b]] (bit-or (bit-shift-left a 32)
-                            b)))))
-
-(defn- bisect-long [l]
-  [(unsigned-bit-shift-right l 32)
-   (bit-and l 0xFFFFFFFF)])
-
-(defn- pad-zeros [w s]
-  (as-> (format (str "%" w "s") s) $
-        (clojure.string/replace $ " " "0")))
-
-(defn- hex [l]
-  (->> (bisect-long l)
-       (map (partial format "%08x"))
-       (apply str)))
-
-(defn- bin [l]
-  (->> (bisect-long l)
-       (map #(Long/toString % 2))
-       (map (partial pad-zeros 32))
-       (apply str)))
