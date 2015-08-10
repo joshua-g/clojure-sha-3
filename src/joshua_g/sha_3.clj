@@ -14,19 +14,18 @@
 (def ^:private sha-3-base-params
   {:domain-suffix 2r10, :suffix-len 2})
 
-(def ^:private sha-3-with-size (partial assoc sha-3-base-params :output-size))
+(defn- to-hex-string [bytes]
+  (apply str (map (partial format "%02x") bytes)))
 
-(defn sha-3-224 [byte-coll]
-  (keccak-1600 (sha-3-with-size 224) byte-coll))
+(defn- sha-3-with-size [size]
+  (comp to-hex-string 
+        (partial keccak-1600 
+                 (assoc sha-3-base-params :output-size size))))
 
-(defn sha-3-256 [byte-coll]
-  (keccak-1600 (sha-3-with-size 256) byte-coll))
-
-(defn sha-3-384 [byte-coll]
-  (keccak-1600 (sha-3-with-size 384) byte-coll))
-
-(defn sha-3-512 [byte-coll]
-  (keccak-1600 (sha-3-with-size 512) byte-coll))
+(def sha-3-224 (sha-3-with-size 224))
+(def sha-3-256 (sha-3-with-size 256))
+(def sha-3-384 (sha-3-with-size 384))
+(def sha-3-512 (sha-3-with-size 512))
 
 (def ^:private round-constants
   [0x0000000000000001 0x0000000000008082 -0x7FFFFFFFFFFF7F76 -0x7FFFFFFF7FFF8000
@@ -147,7 +146,7 @@
               (bit-or $
                       (bit-shift-left 1 (params :suffix-len)))
               (apply vector $ padding-bytes)
-              (update $ (dec (count $)) (partial bit-xor 0x80)))
+              (update $ (dec (count $)) bit-xor 0x80))
         ]
     (concat input-bytes suffix-and-padding)))
 
