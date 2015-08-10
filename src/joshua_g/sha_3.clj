@@ -18,8 +18,8 @@
   (apply str (map (partial format "%02x") bytes)))
 
 (defn- sha-3-with-size [size]
-  (comp to-hex-string 
-        (partial keccak-1600 
+  (comp to-hex-string
+        (partial keccak-1600
                  (assoc sha-3-base-params :output-size size))))
 
 (def sha-3-224 (sha-3-with-size 224))
@@ -101,8 +101,8 @@
                       (hl/aset sa i
                                (bit-xor w
                                         (hl/aget c (mod5 (dec i)))
-                                        (hl/aget c-rot (mod5 (inc i))))))
-            sa))
+                                        (hl/aget c-rot (mod5 (inc i)))))))
+          sa)
 
         rho
         (fn [sa]
@@ -136,19 +136,30 @@
 
 (defn- pad-input [params input-bytes]
   (let [block-size-in-bytes (quot (calc-bit-rate params) 8)
+
         padding-bytes
-        (as-> (inc (count input-bytes)) $
-              (mod (- $) block-size-in-bytes)
-              (repeat $ 0x00))
+        (fn [message-byte-count]
+          (as-> (inc message-byte-count) $
+                (mod (- $) block-size-in-bytes)
+                (repeat $ 0x00)))
 
         suffix-and-padding
-        (as-> (params :domain-suffix) $
-              (bit-or $
-                      (bit-shift-left 1 (params :suffix-len)))
-              (apply vector $ padding-bytes)
-              (update $ (dec (count $)) bit-xor 0x80))
+        (fn [message-byte-count]
+          (as-> (params :domain-suffix) $
+                (bit-or $
+                        (bit-shift-left 1 (params :suffix-len)))
+                (apply vector $ (padding-bytes message-byte-count))
+                (update $ (dec (count $)) bit-xor 0x80)))
+
+        lazily-pad (fn lp [bs]
+                     (let [[block rst] (split-at block-size-in-bytes bs)
+                           n (count block)]
+                       (if (< n block-size-in-bytes)
+                         (concat block (suffix-and-padding n))
+                         (lazy-seq
+                          (concat block (lp rst))))))
         ]
-    (concat input-bytes suffix-and-padding)))
+    (lazily-pad input-bytes)))
 
 (defn- little-endian-bytes-to-word [bs]
   (->> [0 (map vector (range) bs)]
