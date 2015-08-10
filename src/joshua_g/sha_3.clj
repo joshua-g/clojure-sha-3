@@ -7,7 +7,6 @@
 (declare pad-input)
 (declare split-input-into-words)
 (declare word-to-little-endian-bytes)
-(declare positive-rotate)
 
 (def ^:private param-map
   {:sha-3-512 {:output-size 512
@@ -47,7 +46,7 @@
        absorb-block
        (fn [state block]
          (->> (concat block (repeat 0))
-              (map bit-xor state)
+              (mapv bit-xor state)
               keccak-f))
 
        squeeze (partial take block-size-in-words)]
@@ -61,47 +60,51 @@
          (mapcat word-to-little-endian-bytes)
          (take output-size-in-bytes))))
 
+(defn- positive-rotate ^long [^long n ^long x]
+  (bit-or
+   (bit-shift-left x n)
+   (unsigned-bit-shift-right x (- 64 n))))
+
+(defn- chi-combinator ^long [^long a ^long b ^long c]
+  (bit-xor a (bit-and c (bit-not b))))
+
 (defn- round-1600 [state round-constant]
   (let [theta
         (fn [state]
-          (->> (partition 5 state)
-               (apply map bit-xor)
-               (cycle)
-               ((fn [c-cycle]
-                  (map bit-xor
-                       state
-                       (drop 4 c-cycle)
-                       (drop 1
-                             (map (partial positive-rotate 1) c-cycle)))))))
+          (let [c (reduce (fn [c i]
+                            (update c (mod i 5) bit-xor (state i)))
+                          [0 0 0 0 0]
+                          (range 25))
+                c-shift (mapv #(positive-rotate 1 %) c)]
+            (map-indexed (fn [i w]
+                           (bit-xor w
+                                    (c (mod (dec i) 5))
+                                    (c-shift (mod (inc i) 5))))
+                         state)))
 
         rho
         (fn [state]
           (mapv positive-rotate rotation-offsets state))
 
         pi
-        (fn [state-vec]
+        (fn [state]
           (reduce (fn [s from-index]
-                    (conj s (state-vec from-index)))
+                    (conj s (state from-index)))
                   []
                   pi-permutation))
 
-        chi-combinator
-        (fn [a b c]
-          (bit-xor a (bit-and c (bit-not b))))
-
         chi
         (fn [state]
-          (->> (partition 5 state)
-               (map cycle)
-               (mapcat (fn [r]
-                         (->> (partition 3 1 r)
-                              (map (partial apply chi-combinator))
-                              (take 5))))))
+          (for [y (range 5)
+                x (range 5)]
+            (chi-combinator (state (+ x (* 5 y)))
+                            (state (+ (mod (inc x) 5) (* 5 y)))
+                            (state (+ (mod (+ x 2) 5) (* 5 y))))))
 
         iota
-        (fn [[f & R]]
-          (cons (bit-xor f round-constant)
-                R))
+        (fn [state]
+          (update (vec state)
+                  0 bit-xor round-constant))
         ]
     (-> state theta rho pi chi iota)))
 
@@ -145,12 +148,6 @@
        (map #(Long/parseLong % 16))
        ((fn [[a b]] (bit-or (bit-shift-left a 32)
                             b)))))
-
-(defn- positive-rotate [n x]
-  (let [n-mod-64 (mod n 64)]
-    (bit-or
-     (bit-shift-left x n-mod-64)
-     (unsigned-bit-shift-right x (- 64 n-mod-64)))))
 
 (defn- bisect-long [l]
   [(unsigned-bit-shift-right l 32)
